@@ -7,8 +7,8 @@ services:
     ports:
       - "8089:8089"
     networks:
-      - backend_simple_travel
+      - simple_travel_simple_travel
 
 networks:
-  backend_simple_travel:
+  simple_travel_simple_travel:
     external: true
