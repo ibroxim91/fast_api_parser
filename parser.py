@@ -3,7 +3,7 @@
 import random
 
 from playwright.async_api import async_playwright
-# import json
+import json
 # from rapidfuzz import fuzz
 USER_AGENTS = [
     # Windows Chrome
@@ -21,23 +21,25 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
 
-    # Android Chrome
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
+    # # Android Chrome
+    # "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 "
+    # "(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
 
-    # iPhone Safari
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile Safari/605.1.15",
+    # # iPhone Safari
+    # "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+    # "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile Safari/605.1.15",
 ]
 
 
 class AgodaHotelScraper:
     """Agoda veb-saytidan otel ma'lumotlarini to'plash"""
 
-    def __init__(self, query: str):
+    def __init__(self, query: str, region_name: str = None):
         self.query = query
+        self.region_name = region_name
         self.page = None
         self.browser = None
+       
         self.context = None
         self.hotel_data = {
             "name": None,
@@ -65,7 +67,10 @@ class AgodaHotelScraper:
         search_input = self.page.locator('input[data-selenium="textInput"]')
         await search_input.click()
         await search_input.fill("")
-        await search_input.type(self.query, delay=200)
+        hotel_name = self.query
+        if self.region_name:
+            hotel_name = f"{self.query.upper()} { self.region_name.upper()}"
+        await search_input.type(hotel_name, delay=200)
         await self.page.locator('span[data-testid="break-down-highlight-text"]').first.wait_for(timeout=10000)
         first_span = self.page.locator('span[data-testid="break-down-highlight-text"]').first
         await first_span.click()
@@ -84,12 +89,15 @@ class AgodaHotelScraper:
         """Topilgan birinchi 3 ta hotelni tekshirib, queryga mosini tanlash"""
         await self.page.locator('a[data-testid="property-name-link"]').first.wait_for(timeout=70000)
         hotels = await self.page.locator('a[data-testid="property-name-link"]').all()
+        print()
+        print("Hotels length: ", len(hotels))
+        print()
         for hotel in hotels[:3]:
             # Locator emas, element handle olish
             h3_handle = await hotel.element_handle()
 
             if h3_handle:
-                h3 = await h3_handle.query_selector("h3")
+                h3 = await h3_handle.query_selector("span")
                 if h3:
                     hotel_name = (await h3.inner_text()).strip()
                     print()
