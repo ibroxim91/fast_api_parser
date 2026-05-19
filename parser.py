@@ -1,10 +1,11 @@
-# import time
+import time
 
 import random
 
 from playwright.async_api import async_playwright
 import json
-# from rapidfuzz import fuzz
+from rapidfuzz import fuzz
+HEADLESS = True
 USER_AGENTS = [
     # Windows Chrome
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -34,9 +35,12 @@ USER_AGENTS = [
 class AgodaHotelScraper:
     """Agoda veb-saytidan otel ma'lumotlarini to'plash"""
 
-    def __init__(self, query: str, region_name: str = None):
+    def __init__(self, query: str, region_name_uz: str = None, region_name_ru: str = None, country_name: str = None, destination: str = None):
         self.query = query
-        self.region_name = region_name
+        self.region_name_uz = region_name_uz
+        self.region_name_ru = region_name_ru
+        self.country_name = country_name
+        self.destination = destination
         self.page = None
         self.browser = None
        
@@ -53,7 +57,7 @@ class AgodaHotelScraper:
 
     async def launch_browser(self):
         p = await async_playwright().start()
-        self.browser = await p.chromium.launch(headless=True)
+        self.browser = await p.chromium.launch(headless=HEADLESS)
         ua = random.choice(USER_AGENTS)
         self.context = await self.browser.new_context(
             user_agent=ua,
@@ -62,52 +66,119 @@ class AgodaHotelScraper:
         )
         self.page = await self.context.new_page()
 
+
     async def search_hotel(self):
         await self.page.goto("https://www.agoda.com/ru-ru/", timeout=120000)
         search_input = self.page.locator('input[data-selenium="textInput"]')
         await search_input.click()
         await search_input.fill("")
+
         hotel_name = self.query
-        if self.region_name:
-            hotel_name = f"{self.query.upper()} { self.region_name.upper()}"
+        if self.region_name_uz and self.region_name_uz.lower() in self.query.lower():
+            self.query = self.query.replace(self.region_name_uz, "")
+
+        if self.destination and self.destination.lower().strip() not in [self.region_name_ru.lower().strip(), self.region_name_uz.lower().strip()]:
+            hotel_name += f" ,{self.destination}"
+        elif self.region_name_ru and self.region_name_ru.lower() not in self.query.lower():
+            hotel_name += f" ,{self.region_name_ru}"    
+
+        if self.country_name and self.country_name.lower() not in self.query.lower():
+            hotel_name += f" ,{self.country_name}"
+
+        self.hotelname = hotel_name
+        print("Qidirilayotgan hotel nomi:", hotel_name)
+
         await search_input.type(hotel_name, delay=200)
-        await self.page.locator('span[data-testid="break-down-highlight-text"]').first.wait_for(timeout=10000)
-        first_span = self.page.locator('span[data-testid="break-down-highlight-text"]').first
-        await first_span.click()
+
+        # 🔎 3 ta span elementni olish
+        await self.page.locator('span[data-testid="break-down-highlight-text"]').first.wait_for(timeout=50000)
+        spans = await self.page.locator('span[data-testid="break-down-highlight-text"]').all()
+        spans = spans[:3]  # faqat birinchi 3 ta
+
+        best_score = 0
+        best_span = None
+        print()
+        print("spans ", spans)
+        print()
+        for span in spans:
+            text = (await span.inner_text()).strip()
+            print("Checking span text: ", text , " against query: ", self.query,  self.query.lower().strip() in text.lower().strip() or text.lower().strip() in self.query.lower().strip())
+            if self.query.lower().strip() in text.lower().strip() or text.lower().strip() in self.query.lower().strip():
+                best_score = 100
+                print("Perfect match found: ", text)
+                best_span = span
+
+        if best_span:
+            await best_span.click()
+        else:
+            # fallback: birinchi natija
+            await self.page.locator('span[data-testid="break-down-highlight-text"]').first.click()
+        time.sleep(5)  # sahifa yuklanishi uchun kutish
         search_button = self.page.locator('button[data-element-name="search-button"]')
         await search_button.click()
         await self.page.wait_for_load_state("domcontentloaded")
+
         matched = await self.choose_matching_hotel()
-        if not matched:
-            return False
-        return True
+        return matched
+
 
 
     
 
     async def choose_matching_hotel(self):
         """Topilgan birinchi 3 ta hotelni tekshirib, queryga mosini tanlash"""
-        await self.page.locator('a[data-testid="property-name-link"]').first.wait_for(timeout=70000)
-        hotels = await self.page.locator('a[data-testid="property-name-link"]').all()
-        print()
-        print("Hotels length: ", len(hotels))
-        print()
-        for hotel in hotels[:3]:
-            # Locator emas, element handle olish
-            h3_handle = await hotel.element_handle()
+        try:
+            await self.page.locator('a[data-testid="property-name-link"]').first.wait_for(timeout=70000)
+            hotels = await self.page.locator('a[data-testid="property-name-link"]').all()
+            print()
+            print("Hotels length: ", len(hotels))
+            print()
+            for hotel in hotels[:3]:
+                # Locator emas, element handle olish
+                h3_handle = await hotel.element_handle()
 
-            if h3_handle:
-                h3 = await h3_handle.query_selector("span")
-                if h3:
-                    hotel_name = (await h3.inner_text()).strip()
-                    print()
-                    print("hotel_name.lower() : ", hotel_name.lower(), " self.query.lower() " , self.query.lower()) 
-                    print()
-                    if self.query.lower() in hotel_name.lower() or hotel_name.lower() in self.query.lower():
-                        self.hotel_data["name"] = hotel_name
-                        hotel_link = await hotel.get_attribute("href")
-                        self.hotel_data["url"] = f"https://www.agoda.com{hotel_link}"
-                        return True
+                if h3_handle:
+                    h3 = await h3_handle.query_selector("span")
+                    if h3:
+                        hotel_name = (await h3.inner_text()).strip()
+                        print()
+                        print("hotel_name.lower() : ", hotel_name.lower(), " self.query.lower() " , self.query.lower()) 
+                        print()
+                        if self.query.lower() in hotel_name.lower() or hotel_name.lower() in self.query.lower():
+                            self.hotel_data["name"] = hotel_name
+                            hotel_link = await hotel.get_attribute("href")
+                            self.hotel_data["url"] = f"https://www.agoda.com{hotel_link}"
+                            return True
+                        score_query = fuzz.token_sort_ratio(self.query.lower(), hotel_name.lower())
+                        print(f"Score for {hotel_name}: {score_query}")
+                        if score_query >= 80:
+                            self.hotel_data["name"] = hotel_name
+                            hotel_link = await hotel.get_attribute("href")
+                            self.hotel_data["url"] = f"https://www.agoda.com{hotel_link}"
+                            return True
+                        import re
+
+                        q = self.query.lower().strip()
+
+                        # "hotel" so‘zini olib tashlash
+                        q = re.sub(r"\bhotel\b", "", q)
+
+                        # region nomlarini olib tashlash
+                        if self.region_name_uz:
+                            q = q.replace(self.region_name_uz.lower(), "")
+                        if self.region_name_ru:
+                            q = q.replace(self.region_name_ru.lower(), "")
+
+                        # ortiqcha bo‘sh joylarni tozalash
+                        q = re.sub(r"\s+", " ", q).strip()
+                        if q in hotel_name.lower():
+                            print(f"Perfect match found for query re module '{self.query}': {hotel_name}")
+                            self.hotel_data["name"] = hotel_name
+                            hotel_link = await hotel.get_attribute("href")
+                            self.hotel_data["url"] = f"https://www.agoda.com{hotel_link}"
+                            return True
+        except Exception as e:
+            print(f"Hotelni tanlashda xatolik: {e}")                
         return False
 
 
